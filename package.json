@@ -1,0 +1,23 @@
+{
+  "name": "personal-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Controlled personal AI orchestrator",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "^0.163.0"
+  }
+}

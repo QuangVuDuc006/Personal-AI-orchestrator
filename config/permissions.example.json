@@ -1,0 +1,11 @@
+{
+  "defaultDecision": "deny",
+  "discussion": {
+    "allowedOperations": ["read", "grep", "glob"],
+    "allowedCommands": []
+  },
+  "execution": {
+    "allowedOperations": [],
+    "allowedCommands": []
+  }
+}
