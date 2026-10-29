@@ -4,7 +4,7 @@ Nền tảng điều phối AI cá nhân có kiểm soát, nhận yêu cầu t�
 
 ## Trạng thái
 
-P1 - Interface + Read-only Discussion Mode. Dự án có router dùng chung, CLI, Telegram adapter với allowlist fail-closed và artifact store. Chưa có Telegram transport, planner, worker, task queue, approval flow hoặc Git automation.
+P2 - Planning + Approval. P1 remains available; P2 adds validated plans, version/hash binding, authenticated approval and a frozen PENDING queue. No model calls, Telegram transport, execution worker or Git automation.
 
 ## Kiến trúc dự kiến
 
@@ -95,3 +95,49 @@ Giới hạn: chưa có khóa chống ghi đồng thời, chưa ghi hai file the
 | P7 | Đánh giá MAS sau khi baseline đạt yêu cầu |
 
 Không chuyển pha nếu điều kiện nghiệm thu của pha hiện tại chưa đạt hoặc chưa được phê duyệt.
+
+## CLI P2: internal planning and approval
+
+Set `WORKSPACE_ROOT`, `PLANNING_HMAC_KEY` (a persistent, randomly generated 32-byte key encoded as 64 lowercase hex characters), and `PLANNING_APPROVERS` (exact OS usernames, comma-separated) through a trusted environment. Keep the key outside the repository/artifacts and out of arguments/logs. CLI does not load `.env` automatically. Missing key/allowlist or a changed key blocks access. Removing an approver invalidates their existing approval.
+
+CLI identity comes from `node:os.userInfo().username`, never stdin. The internal service's `authenticate` callback must obtain identity from a trusted authenticated channel, never an arbitrary payload. OS accounts able to read the key are trusted; remote/multi-user authentication is outside P2.
+
+After `/ban-luan` has created a P1 discussion artifact (including BLOCKED while the model is disabled):
+
+```text
+/planning-start       Create DISCUSSION from the latest validated P1 discussion
+/done                 stdin JSON PlanInput -> PLANNING
+/plan                 Show validated plan, hash/version, state, approval and queue
+/status               Show the validated snapshot
+/request-approval     PLANNING -> WAIT_APPROVAL
+/ok                   stdin JSON {planId, planVersion, planHash} -> READY_FOR_EXECUTION
+/no                   WAIT_APPROVAL or READY_FOR_EXECUTION -> a new PLANNING version
+```
+
+Run `npm run cli -- <command>`. For `/done`, `/ok`, `/no`, redirect stdin from a private UTF-8 file as documented for P1. `/no` accepts a replacement PlanInput, or empty redirected stdin to retain content with a new version. One P2 workflow per workspace; `/planning-start` never overwrites an existing snapshot. P2 commands are CLI/internal-service only; the Telegram adapter remains P1.
+
+Example PlanInput (data only; content is never executed):
+
+```json
+{
+  "goal": "Add regression coverage",
+  "steps": [{"id": "T1", "description": "Add a test", "goal": "Prevent regression", "expectedResult": "Test passes"}],
+  "expectedFiles": ["tests/example.test.ts"],
+  "acceptanceCriteria": ["Regression test passes"],
+  "risks": []
+}
+```
+
+Validation rejects missing/extra fields, wrong types, empty/control-character strings, duplicate step IDs, absolute/traversal paths, Windows reserved names, and existing symlink/junction ancestors in expected file paths. Limits: 100 steps/items per list, 4096 characters/string, 240 characters/path, 256 KiB input. Risks may be empty; steps/files/acceptanceCriteria may not. Plan text cannot override policy or grant execution permissions.
+
+SHA-256 hashes UTF-8 JSON in fixed order: `planId`, `version`, `createdAt`, `goal`, `steps` (each: `id`, `description`, `goal`, `expectedResult`), `expectedFiles`, `acceptanceCriteria`, `risks`, `status`. Array order matters; strings are not trimmed. Only `planHash` is excluded. The plan content's status stays `PROPOSED`; workflow state is separate so approval always refers to the same content hash.
+
+P2's source of truth is `_bmad-output/orchestrator/planning.json`: an envelope `{body, mac}` with HMAC-SHA256 over the exact body string. Body contains plan, approval, PENDING queue and transition history. Each transition writes one exclusive temporary file, syncs/closes it, then renames it over the snapshot. Failures before rename preserve the prior snapshot. This is not a multi-file transaction or a guarantee of power-loss durability. Restart ignores orphan temporary files; missing/corrupt canonical snapshots, invalid signatures or inconsistent schema/events/state/approval/queue fail closed without fallback or repair. P1 prompts are omitted; PlanInput is deliberately persisted, so do not include secrets in plans. Events contain only state/time/version/hash.
+
+Flow: `DISCUSSION -> PLANNING -> WAIT_APPROVAL -> READY_FOR_EXECUTION`. Only `/ok` from WAIT_APPROVAL with an exact reference creates approval (planId, planVersion, planHash, approverId, approvedAt) and a hash-bound PENDING queue. `/no` from WAIT_APPROVAL or READY_FOR_EXECUTION increments the version, clears approval/queue and returns to PLANNING. Direct file edits are rejected; supported revisions require `/no` and fresh approval. Duplicate approval and other transitions fail without writes. READY does not launch anything; there is no RUNNING state or execution API.
+
+All P2 reads/mutations acquire an exclusive filesystem directory `planning.lock`; overlapping operations are rejected without implicit retry. A crash can leave this lock: stop all related processes, inspect the snapshot/backup, and have an administrator remove the lock only after confirming no operation is active. There is no automatic PID/timeout lock breaking. Restart verifies signature, schema, events and approval before exposing state. Workflows are capped at 1000 events and 512 KiB snapshot body.
+
+Security limits: path checks cannot eliminate filesystem TOCTOU against a hostile local process. HMAC detects edits but cannot detect replay of an entire previously valid signed snapshot; a trusted monotonic store is required before real execution. Protect the key/workspace/artifacts with OS permissions; this is not a multi-user deployment. Missing snapshots are never automatically recreated.
+
+Before P3: approve the execution sandbox/allowlist design, add monotonic rollback protection, then implement queue worker, timeout/retry/recovery and independent result verification. P2 never executes tasks or plan content.
