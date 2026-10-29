@@ -4,7 +4,7 @@ Nền tảng điều phối AI cá nhân có kiểm soát, nhận yêu cầu t�
 
 ## Trạng thái
 
-P0 - Preparation. Repository mới chỉ có cấu hình, khung mã nguồn và fixture an toàn. Chưa có CLI, Telegram bot, state machine, worker, Git automation hoặc chức năng runtime của P1 trở đi.
+P1 - Interface + Read-only Discussion Mode. Dự án có router dùng chung, CLI, Telegram adapter với allowlist fail-closed và artifact store. Chưa có Telegram transport, planner, worker, task queue, approval flow hoặc Git automation.
 
 ## Kiến trúc dự kiến
 
@@ -37,17 +37,49 @@ Luồng dự kiến: terminal/Telegram -> router và xác thực -> orchestrator
 
 [`config/permissions.example.json`](config/permissions.example.json) là cấu hình mẫu fail-closed, chưa được nối vào runtime. Secret thật chỉ được đặt trong `.env` cục bộ; không ghi vào config, artifact hoặc log.
 
+Codex SDK đã có adapter và tùy chọn dự kiến `read-only`, không approval, không network. P1 chưa gọi model vì sandbox read-only chưa chứng minh được yêu cầu cấm hoàn toàn shell; adapter sẽ từ chối an toàn thay vì chỉ dựa vào prompt.
+
 ## Cài đặt
 
 Yêu cầu môi trường đã kiểm tra cho P0: Node.js 24.x, npm 11.x và Git 2.55.x.
 
 ```bash
 npm ci
+npm test
 npm run typecheck
 npm run build
 ```
 
 Sao chép `.env.example` thành `.env` khi bắt đầu cấu hình cục bộ. Không commit `.env`, token, API key, credential hoặc dữ liệu cá nhân.
+
+## CLI P1
+
+Chỉ truyền tên lệnh qua arguments. Prompt được đọc từ stdin (file UTF-8 cục bộ được bảo vệ), không truyền nội dung prompt qua arguments hoặc lệnh chứa prompt trực tiếp.
+
+Windows Command Prompt (`cmd.exe`):
+
+```bat
+npm run cli -- /ban-luan < "C:\private\topic.txt"
+```
+
+Bash:
+
+```bash
+npm run cli -- /ban-luan < /private/topic.txt
+```
+
+```bash
+npm run cli -- /xem
+npm run cli -- /giao-tele
+```
+
+`/ban-luan` ghi artifact hệ thống vào `_bmad-output/orchestrator/<run-id>/`, sau đó trả trạng thái bị chặn vì AI chưa được phép chạy. `/xem` chỉ đọc artifact gần nhất. `/giao-tele` dùng interface gửi tin nhưng sẽ bị chặn cho tới khi Telegram transport được cấu hình và kiểm thử.
+
+CLI từ chối prompt trong arguments và stdin rỗng; không nhập trực tiếp tại TTY để tránh echo. Npm vẫn có thể in arguments nếu người dùng truyền sai cách; CLI không thể xóa output đã được tiến trình cha in ra. File prompt do người dùng quản lý; không đặt vào repo hoặc log.
+
+P1 chỉ cho phép `RECORDED` → một kết quả `BLOCKED` hoặc `DISCUSSION_READY`; không append sau kết quả cuối. Cả Markdown và event log được xác thực trước khi append/đọc. Run mới nhất dựa trên timestamp đầy đủ của event `discussion.recorded`, không dựa trên hậu tố ID; nếu timestamp mới nhất trùng hoàn toàn thì báo lỗi an toàn. Mọi entry mang tên run hợp lệ nhưng hỏng hoặc là link đều chặn việc đọc, kể cả run cũ.
+
+Giới hạn: chưa có khóa chống ghi đồng thời, chưa ghi hai file theo transaction/atomic và chưa loại bỏ TOCTOU. Lỗi giữa hai lần ghi có thể để lại artifact dở; cặp dữ liệu lệch bị chặn khi đọc, không tự khôi phục. Run chỉ có `RECORDED` vẫn có thể là run bị gián đoạn; chưa có recovery trong P1.
 
 ## Lộ trình
 

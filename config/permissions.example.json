@@ -1,8 +1,10 @@
 {
   "defaultDecision": "deny",
   "discussion": {
+    "aiInvocation": "disabled",
     "allowedOperations": ["read", "grep", "glob"],
-    "allowedCommands": []
+    "allowedCommands": [],
+    "networkAccess": false
   },
   "execution": {
     "allowedOperations": [],
